@@ -11,7 +11,7 @@ SHELL:=/bin/bash
 
 test: ## test
 	echo 'Starting $@'
-	docker compose run --rm python poetry run python -m unittest discover
+	docker compose run --rm python poetry run python -m unittest discover -v
 	echo 'Finished $@'
 
 fix: ## fix
