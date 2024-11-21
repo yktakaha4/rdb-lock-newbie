@@ -4,7 +4,11 @@ from unittest import TestCase
 from mysql import connector
 
 
-class MySQLTest(TestCase):
+class MySqlLockTest(TestCase):
+    """
+    https://blog.tiqwab.com/2018/06/10/innodb-locking.html
+    """
+
     def create_connection(self):
         conn = connector.connect(
             host=environ["MYSQL_HOST"],
