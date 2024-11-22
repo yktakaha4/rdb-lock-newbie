@@ -1,3 +1,4 @@
+import re
 from os import environ
 from unittest import TestCase
 
@@ -221,7 +222,10 @@ class MySqlLockTest(TestCase):
             _, _, status = cur.fetchall()[0]
             self.assertRegex(
                 status,
-                r"RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap",
+                re.compile(
+                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
+                    re.MULTILINE,
+                ),
             )
 
         """
@@ -255,5 +259,8 @@ class MySqlLockTest(TestCase):
             _, _, status = cur.fetchall()[0]
             self.assertRegex(
                 status,
-                r"RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks gap before rec",
+                re.compile(
+                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks gap before rec$",
+                    re.MULTILINE,
+                ),
             )
