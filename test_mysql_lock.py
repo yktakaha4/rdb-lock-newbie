@@ -9,12 +9,16 @@ class MySqlLockTest(TestCase):
     https://blog.tiqwab.com/2018/06/10/innodb-locking.html
     """
 
-    def create_connection(self):
+    def create_connection(self, root=False):
         conn = connector.connect(
             host=environ["MYSQL_HOST"],
             port=environ["MYSQL_PORT"],
-            user=environ["MYSQL_USER"],
-            password=environ["MYSQL_PASSWORD"],
+            user=environ["MYSQL_USER"] if not root else "root",
+            password=(
+                environ["MYSQL_PASSWORD"]
+                if not root
+                else environ["MYSQL_ROOT_PASSWORD"]
+            ),
             database=environ["MYSQL_DATABASE"],
         )
         conn.autocommit = False
@@ -22,7 +26,7 @@ class MySqlLockTest(TestCase):
         return conn
 
     def setup_tables(self, query):
-        conn = self.create_connection()
+        conn = self.create_connection(root=True)
         with conn.cursor() as cur:
             for q in query.split(";"):
                 cleaned = q.strip()
@@ -36,7 +40,9 @@ class MySqlLockTest(TestCase):
 
     def tearDown(self):
         for conn in self._connections:
-            conn.close()
+            if conn.is_connected():
+                conn.rollback()
+                conn.close()
 
     def test_consistent_read_and_locking_read(self):
         """
@@ -158,3 +164,96 @@ class MySqlLockTest(TestCase):
                 (2, 6),
             ],
         )
+
+    def test_innodb_locking(self):
+        """
+        InnoDB Locking
+
+        - ロックには粒度が色々ある (e.g. レコード、テーブル)
+        - ざっくりとはここで挙げる種類と上の shared or exlusive の組み合わせで普段扱うロックを捉えられるはず
+            - 有り得ない組み合わせとかフラグみたいな概念もありそうなのであくまでざっくりと
+        """
+        self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `lock_sample`;
+        CREATE TABLE `lock_sample` (
+            `id` bigint(20) NOT NULL,
+            `val1` int(11) NOT NULL,
+            PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        INSERT INTO `lock_sample`
+            (`id`, `val1`)
+        VALUES
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 3),
+            (5, 4),
+            (8, 8);
+        """
+        )
+
+        """
+        InnoDB標準モニターおよびロックモニターが有効化されていること
+        """
+        with self.create_connection() as conn:
+            cur = conn.cursor()
+
+            cur.execute("show global variables like 'innodb_status_output'")
+            self.assertEqual(cur.fetchone()[1], "ON")
+
+            cur.execute("show global variables like 'innodb_status_output_locks'")
+            self.assertEqual(cur.fetchone()[1], "ON")
+
+        """
+        record lock
+
+        - index record へのロック
+        - record をロックするという場合、実際はインデックス上のレコードをロックしている
+            - インデックスが定義されていないテーブルでも内部で作成したインデックスを使用する
+        """
+        with self.create_connection(root=True) as conn:
+            cur = conn.cursor(buffered=True)
+
+            # RECORD LOCKS や locks rec but not gap が書かれている行から、ここでは lock_sample テーブルの PRIMARY インデックス 上には record exclusive lock を取得していることがわかります。
+            cur.execute("SELECT * FROM lock_sample WHERE id = 2 FOR UPDATE")
+            cur.execute("SHOW ENGINE INNODB STATUS")
+            _, _, status = cur.fetchall()[0]
+            self.assertRegex(
+                status,
+                r"RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap",
+            )
+
+        """
+        gap lock
+
+        - index records 間のスペースに対するロック
+        - ファントムリードの防止
+            - なので (MySQL の) REPEATABLE READ では必要だが READ COMMITED では発生しない
+        """
+        with self.create_connection(root=True) as conn:
+            cur = conn.cursor(buffered=True)
+
+            cur.execute("SELECT * FROM lock_sample")
+            actual = cur.fetchall()
+            # id = 6 は存在しない
+            self.assertListEqual(
+                actual,
+                [
+                    (1, 1),
+                    (2, 2),
+                    (3, 3),
+                    (4, 3),
+                    (5, 4),
+                    (8, 8),
+                ],
+            )
+
+            # SHOW ENGINE INNODB STATUS では RECORD LOCKS ... locks gap before rec と表示されます。
+            cur.execute("SELECT * FROM lock_sample WHERE id = 6 FOR UPDATE")
+            cur.execute("SHOW ENGINE INNODB STATUS")
+            _, _, status = cur.fetchall()[0]
+            self.assertRegex(
+                status,
+                r"RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks gap before rec",
+            )

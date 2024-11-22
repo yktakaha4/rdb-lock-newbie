@@ -6,6 +6,7 @@ services:
     volumes:
       - .:/app
     environment:
+      MYSQL_ROOT_PASSWORD: mysql
       MYSQL_DATABASE: mysql
       MYSQL_USER: mysql
       MYSQL_PASSWORD: mysql
@@ -17,6 +18,8 @@ services:
 
   mysql:
     image: mysql:8.0
+    volumes:
+      - ./db/mysql/conf.d/:/etc/mysql/conf.d/
     environment:
       MYSQL_ROOT_PASSWORD: mysql
       MYSQL_DATABASE: mysql
