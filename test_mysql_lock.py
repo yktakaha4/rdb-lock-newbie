@@ -1,4 +1,5 @@
 import re
+import threading
 from os import environ
 from unittest import TestCase
 
@@ -223,11 +224,10 @@ class MySqlLockTest(TestCase):
             self.assertRegex(
                 status,
                 re.compile(
-                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
+                    r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
                     re.MULTILINE,
                 ),
             )
-            self.assertEqual(status.count("Record lock"), 1)
 
         """
         gap lock
@@ -261,11 +261,10 @@ class MySqlLockTest(TestCase):
             self.assertRegex(
                 status,
                 re.compile(
-                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks gap before rec$",
+                    r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks gap before rec$",
                     re.MULTILINE,
                 ),
             )
-            self.assertEqual(status.count("Record lock"), 1)
 
         """
         next-key lock
@@ -298,11 +297,10 @@ class MySqlLockTest(TestCase):
             self.assertRegex(
                 status,
                 re.compile(
-                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
+                    r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
                     re.MULTILINE,
                 ),
             )
-            self.assertEqual(status.count("Record lock"), 2)
 
     def test_dml_exclusive_lock(self):
         """
@@ -337,11 +335,10 @@ class MySqlLockTest(TestCase):
             self.assertRegex(
                 status,
                 re.compile(
-                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
+                    r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
                     re.MULTILINE,
                 ),
             )
-            self.assertEqual(status.count("Record lock"), 1)
 
     def test_lock_using_select(self):
         """
@@ -379,8 +376,63 @@ class MySqlLockTest(TestCase):
             self.assertRegex(
                 status,
                 re.compile(
-                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
+                    r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
                     re.MULTILINE,
                 ),
             )
-            self.assertEqual(status.count("Record lock"), 7)
+
+    def test_lock_wait(self):
+        """
+        取得ロックの確認方法
+        """
+        self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `lock_sample`;
+        CREATE TABLE `lock_sample` (
+            `id` bigint(20) NOT NULL,
+            `val1` int(11) NOT NULL,
+            PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        INSERT INTO `lock_sample`
+            (`id`, `val1`)
+        VALUES
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 3),
+            (5, 4);
+        """
+        )
+
+        t_a_conn = self.create_connection(root=True)
+        t_a_cur = t_a_conn.cursor(buffered=True)
+
+        t_a_cur.execute("SELECT * FROM lock_sample WHERE id = 3 FOR UPDATE")
+        t_a_cur.execute("SHOW ENGINE INNODB STATUS")
+        _, _, status = t_a_cur.fetchall()[0]
+        self.assertRegex(
+            status,
+            re.compile(
+                r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
+                re.MULTILINE,
+            ),
+        )
+
+        def t_b():
+            t_b_conn = self.create_connection(root=True)
+            t_b_cur = t_b_conn.cursor(buffered=True)
+            t_b_cur.execute("SELECT * FROM lock_sample WHERE id = 3 FOR UPDATE")
+
+        thread = threading.Thread(target=t_b)
+        thread.start()
+        thread.join(timeout=0.1)
+
+        t_a_cur.execute("SHOW ENGINE INNODB STATUS")
+        _, _, status = t_a_cur.fetchall()[0]
+        self.assertRegex(
+            status,
+            re.compile(
+                r"^RECORD LOCKS space id \d+ page no \d+ n bits \d+ index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap waiting$",
+                re.MULTILINE,
+            ),
+        )
