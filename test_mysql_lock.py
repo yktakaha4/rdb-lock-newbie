@@ -227,6 +227,7 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+            self.assertEqual(status.count("Record lock"), 1)
 
         """
         gap lock
@@ -264,6 +265,7 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+            self.assertEqual(status.count("Record lock"), 1)
 
         """
         next-key lock
@@ -300,6 +302,7 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+            self.assertEqual(status.count("Record lock"), 2)
 
     def test_dml_exclusive_lock(self):
         """
@@ -338,6 +341,7 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+            self.assertEqual(status.count("Record lock"), 1)
 
     def test_lock_using_select(self):
         """
@@ -379,3 +383,4 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+            self.assertEqual(status.count("Record lock"), 7)
