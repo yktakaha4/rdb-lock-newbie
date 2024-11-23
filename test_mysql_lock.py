@@ -264,3 +264,77 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+
+        """
+        next-key lock
+
+        - record lock と gap lock の組み合わせ
+        """
+        with self.create_connection(root=True) as conn:
+            cur = conn.cursor(buffered=True)
+
+            cur.execute("SELECT * FROM lock_sample")
+            actual = cur.fetchall()
+            # id = 6 は存在しない
+            self.assertListEqual(
+                actual,
+                [
+                    (1, 1),
+                    (2, 2),
+                    (3, 3),
+                    (4, 3),
+                    (5, 4),
+                    (8, 8),
+                ],
+            )
+
+            # RECORD LOCKS の行で lock_mode X で終わっているのが record lock, gap lock との違いになります。
+            # FIXME: 例で説明されていた WHERE id BETWEEN 6 AND 7 ではギャップロックになった
+            cur.execute("SELECT * FROM lock_sample WHERE id >= 6 FOR UPDATE")
+            cur.execute("SHOW ENGINE INNODB STATUS")
+            _, _, status = cur.fetchall()[0]
+            self.assertRegex(
+                status,
+                re.compile(
+                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
+                    re.MULTILINE,
+                ),
+            )
+
+    def test_dml_exclusive_lock(self):
+        """
+        DML 文は暗黙的に exclusive lock を取る
+        """
+        self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `lock_sample`;
+        CREATE TABLE `lock_sample` (
+            `id` bigint(20) NOT NULL,
+            `val1` int(11) NOT NULL,
+            PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        INSERT INTO `lock_sample`
+            (`id`, `val1`)
+        VALUES
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 3),
+            (5, 4),
+            (8, 8);
+        """
+        )
+
+        with self.create_connection(root=True) as conn:
+            cur = conn.cursor(buffered=True)
+
+            cur.execute("UPDATE lock_sample SET val1 = 10 WHERE id = 2")
+            cur.execute("SHOW ENGINE INNODB STATUS")
+            _, _, status = cur.fetchall()[0]
+            self.assertRegex(
+                status,
+                re.compile(
+                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X locks rec but not gap$",
+                    re.MULTILINE,
+                ),
+            )
