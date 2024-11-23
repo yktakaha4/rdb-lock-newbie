@@ -338,3 +338,44 @@ class MySqlLockTest(TestCase):
                     re.MULTILINE,
                 ),
             )
+
+    def test_lock_using_select(self):
+        """
+        検索に使用された行がロックの対象になる
+
+        例えば以下のようにインデックスを設定していない列を条件に指定すると、検索はテーブル全体を対象にしないといけないために各レコードと supremum に next-key lock を取得するようです。
+        ここで出てくる supremum とは MySQL が内部的に持つ上限値を表すレコードです。このため他トランザクションからはこのテーブルに update, insert が一切行えない状況になります。
+        """
+        self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `lock_sample`;
+        CREATE TABLE `lock_sample` (
+            `id` bigint(20) NOT NULL,
+            `val1` int(11) NOT NULL,
+            PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        INSERT INTO `lock_sample`
+            (`id`, `val1`)
+        VALUES
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 3),
+            (5, 4),
+            (8, 8);
+        """
+        )
+
+        with self.create_connection(root=True) as conn:
+            cur = conn.cursor(buffered=True)
+
+            cur.execute("SELECT * FROM lock_sample WHERE val1 = 2 FOR UPDATE")
+            cur.execute("SHOW ENGINE INNODB STATUS")
+            _, _, status = cur.fetchall()[0]
+            self.assertRegex(
+                status,
+                re.compile(
+                    r"^RECORD LOCKS space id \d+ page no 4 n bits 80 index PRIMARY of table `mysql`\.`lock_sample` trx id \d+ lock_mode X$",
+                    re.MULTILINE,
+                ),
+            )
