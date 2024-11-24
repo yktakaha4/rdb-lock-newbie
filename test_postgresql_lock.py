@@ -151,6 +151,7 @@ class PostgresqlLockTest(TestCase):
             actual, headers="keys", tablefmt="psql", stralign="right"
         )
 
+        # FIXME: 待ちの state は active になるとのことだったが、idle in transaction になっている
         self.assertEqual(
             actual_table,
             f"""
@@ -235,3 +236,69 @@ class PostgresqlLockTest(TestCase):
 +-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
 """.strip(),
         )
+
+        # Aがcommit
+        t_a_cur.execute("COMMIT")
+
+        thread_b.join()
+        t_b_cur.execute("SELECT txid_current()")
+        t_b = str(t_b_cur.fetchone()[0]).rjust(5)
+
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="right"
+        )
+
+        self.assertEqual(
+            actual_table,
+            f"""
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+|   pid |      locktype |   table_name |   page |   tuple |   transactionid |                mode |   granted |               state |
+|-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------|
+| {p_b} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} | transactionid |              |        |         |           {t_b} |       ExclusiveLock |      True | idle in transaction |
+| {p_b} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_c} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_c} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_c} | transactionid |              |        |         |           {t_b} |           ShareLock |     False | idle in transaction |
+| {p_c} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |      True | idle in transaction |
+| {p_c} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+""".strip(),
+        )
+
+        # Bがcommit
+        t_b_cur.execute("COMMIT")
+
+        thread_c.join()
+        t_c_cur.execute("SELECT txid_current()")
+        t_c = str(t_c_cur.fetchone()[0]).rjust(5)
+
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="right"
+        )
+
+        self.assertEqual(
+            actual_table,
+            f"""
++-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+|   pid |      locktype |   table_name |   page |   tuple |   transactionid |          mode |   granted |               state |
+|-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------|
+| {p_c} |      relation |        users |        |         |                 |  RowShareLock |      True | idle in transaction |
+| {p_c} |      relation |   users_pkey |        |         |                 |  RowShareLock |      True | idle in transaction |
+| {p_c} | transactionid |              |        |         |           {t_c} | ExclusiveLock |      True | idle in transaction |
+| {p_c} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
++-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+""".strip(),
+        )
+
+        # Cがcommit
+        t_c_cur.execute("COMMIT")
+
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+        self.assertEqual(len(actual), 0)
