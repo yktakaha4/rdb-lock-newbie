@@ -1,16 +1,17 @@
-import json
 import threading
 from os import environ
 from unittest import TestCase
 
 import psycopg
 from psycopg.rows import dict_row
+from tabulate import tabulate
 
 
 class PostgresqlLockTest(TestCase):
     """
     https://qiita.com/behiron/items/571562ea33b8212a4c32
     """
+    maxDiff = None
 
     def create_connection(self):
         params = {
@@ -86,23 +87,30 @@ class PostgresqlLockTest(TestCase):
          and
          l.pid <> pg_backend_pid()  -- このクエリ実行自体は対象外
         order by
-         l.pid;
+         l.pid,
+         l.locktype,
+         c.relname,
+         l.page,
+         l.tuple,
+         l.mode,
+         l.granted,
+         s.state;
         """
 
         t_a_conn = self.create_connection()
         t_a_cur = t_a_conn.cursor()
         t_a_cur.execute("SELECT pg_backend_pid()")
-        t_a_pid = t_a_cur.fetchone()[0]
+        pa = t_a_cur.fetchone()[0]
 
         t_b_conn = self.create_connection()
         t_b_cur = t_b_conn.cursor()
         t_b_cur.execute("SELECT pg_backend_pid()")
-        t_b_pid = t_b_cur.fetchone()[0]
+        pb = t_b_cur.fetchone()[0]
 
         t_c_conn = self.create_connection()
         t_c_cur = t_c_conn.cursor()
         t_c_cur.execute("SELECT pg_backend_pid()")
-        t_c_pid = t_c_cur.fetchone()[0]
+        pc = t_c_cur.fetchone()[0]
 
         t_check_conn = self.create_connection()
         t_check_cur = t_check_conn.cursor(row_factory=dict_row)
@@ -114,39 +122,62 @@ class PostgresqlLockTest(TestCase):
 
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
+        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="left")
 
-        a_rows = [row for row in actual if row["pid"] == t_a_pid]
-        self.assertEqual(len(a_rows), 1)
-        b_rows = [row for row in actual if row["pid"] == t_b_pid]
-        self.assertEqual(len(b_rows), 1)
-        c_rows = [row for row in actual if row["pid"] == t_c_pid]
-        self.assertEqual(len(c_rows), 1)
+        self.assertEqual(actual_table,f"""
++-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+|   pid | locktype   | table_name   | page   | tuple   | transactionid   | mode          | granted   | state               |
+|-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------|
+|  {pa} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
+|  {pb} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
+|  {pc} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
++-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+""".strip())
 
-        for row in actual:
-            self.assertEqual(row["granted"], True)
-            self.assertEqual(row["mode"], "ExclusiveLock")
-            self.assertEqual(row["state"], "idle in transaction")
-
-        # Aが `select for update`
-        t_a_cur.execute("SELECT * FROM users WHERE id = 1 FOR UPDATE")
+        # Aがselect for update
+        t_a_cur.execute("SELECT * FROM users WHERE id=1 FOR UPDATE")
+        t_a_cur.execute("SELECT txid_current()")
+        ta = t_a_cur.fetchone()[0]
 
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
+        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="right")
 
-        a_rows = [row for row in actual if row["pid"] == t_a_pid]
-        self.assertEqual(len(a_rows), 4)
-        for row in a_rows:
-            self.assertEqual(row["granted"], True)
-            self.assertEqual(row["state"], "idle in transaction")
+        self.assertEqual(actual_table,f"""
++-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+|   pid |      locktype |   table_name |   page |   tuple |   transactionid |          mode |   granted |               state |
+|-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------|
+|  {pa} |      relation |        users |        |         |                 |  RowShareLock |      True | idle in transaction |
+|  {pa} |      relation |   users_pkey |        |         |                 |  RowShareLock |      True | idle in transaction |
+|  {pa} | transactionid |              |        |         |             {ta} | ExclusiveLock |      True | idle in transaction |
+|  {pa} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
+|  {pb} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
+|  {pc} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
++-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
+""".strip())
 
-        b_rows = [row for row in actual if row["pid"] == t_b_pid]
-        self.assertEqual(len(b_rows), 1)
-        for row in b_rows:
-            self.assertEqual(row["granted"], True)
-            self.assertEqual(row["state"], "idle in transaction")
+        # Bがselect for update
+        thread = threading.Thread(target=t_b_cur.execute, args=("SELECT * FROM users WHERE id=1 FOR UPDATE",))
+        thread.start()
+        thread.join(timeout=0.1)
 
-        c_rows = [row for row in actual if row["pid"] == t_c_pid]
-        self.assertEqual(len(c_rows), 1)
-        for row in c_rows:
-            self.assertEqual(row["granted"], True)
-            self.assertEqual(row["state"], "idle in transaction")
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="right")
+
+        self.assertEqual(actual_table,f"""
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+|   pid |      locktype |   table_name |   page |   tuple |   transactionid |                mode |   granted |               state |
+|-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------|
+|  {pa} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+|  {pa} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+|  {pa} | transactionid |              |        |         |             {ta} |       ExclusiveLock |      True | idle in transaction |
+|  {pa} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+|  {pb} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+|  {pb} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+|  {pb} | transactionid |              |        |         |             {ta} |           ShareLock |     False | idle in transaction |
+|  {pb} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |      True | idle in transaction |
+|  {pb} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+|  {pc} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+""".strip())
