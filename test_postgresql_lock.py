@@ -1,3 +1,5 @@
+import json
+import threading
 from os import environ
 from unittest import TestCase
 
@@ -43,7 +45,13 @@ class PostgresqlLockTest(TestCase):
             conn.rollback()
             conn.close()
 
-    def test_lock(self):
+    def test_lock_basic_example(self):
+        """
+        基本的な例
+
+        id=1を3つのセッションがselect for updateすることを想定し、pidが順番にselect for updateしていく。
+        """
+
         self.setup_tables(
             """
         drop table if exists users;
@@ -103,13 +111,42 @@ class PostgresqlLockTest(TestCase):
         t_a_cur.execute("BEGIN")
         t_b_cur.execute("BEGIN")
         t_c_cur.execute("BEGIN")
+
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
 
-        self.assertEqual(len(actual), 3)
-        self.assertEqual(actual[0]["pid"], t_a_pid)
-        self.assertEqual(actual[1]["pid"], t_b_pid)
-        self.assertEqual(actual[2]["pid"], t_c_pid)
+        a_rows = [row for row in actual if row["pid"] == t_a_pid]
+        self.assertEqual(len(a_rows), 1)
+        b_rows = [row for row in actual if row["pid"] == t_b_pid]
+        self.assertEqual(len(b_rows), 1)
+        c_rows = [row for row in actual if row["pid"] == t_c_pid]
+        self.assertEqual(len(c_rows), 1)
+
         for row in actual:
+            self.assertEqual(row["granted"], True)
             self.assertEqual(row["mode"], "ExclusiveLock")
+            self.assertEqual(row["state"], "idle in transaction")
+
+        # Aが `select for update`
+        t_a_cur.execute("SELECT * FROM users WHERE id = 1 FOR UPDATE")
+
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+
+        a_rows = [row for row in actual if row["pid"] == t_a_pid]
+        self.assertEqual(len(a_rows), 4)
+        for row in a_rows:
+            self.assertEqual(row["granted"], True)
+            self.assertEqual(row["state"], "idle in transaction")
+
+        b_rows = [row for row in actual if row["pid"] == t_b_pid]
+        self.assertEqual(len(b_rows), 1)
+        for row in b_rows:
+            self.assertEqual(row["granted"], True)
+            self.assertEqual(row["state"], "idle in transaction")
+
+        c_rows = [row for row in actual if row["pid"] == t_c_pid]
+        self.assertEqual(len(c_rows), 1)
+        for row in c_rows:
+            self.assertEqual(row["granted"], True)
             self.assertEqual(row["state"], "idle in transaction")
