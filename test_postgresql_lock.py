@@ -11,6 +11,7 @@ class PostgresqlLockTest(TestCase):
     """
     https://qiita.com/behiron/items/571562ea33b8212a4c32
     """
+
     maxDiff = None
 
     def create_connection(self):
@@ -100,17 +101,17 @@ class PostgresqlLockTest(TestCase):
         t_a_conn = self.create_connection()
         t_a_cur = t_a_conn.cursor()
         t_a_cur.execute("SELECT pg_backend_pid()")
-        pa = t_a_cur.fetchone()[0]
+        p_a = str(t_a_cur.fetchone()[0]).rjust(5)
 
         t_b_conn = self.create_connection()
         t_b_cur = t_b_conn.cursor()
         t_b_cur.execute("SELECT pg_backend_pid()")
-        pb = t_b_cur.fetchone()[0]
+        p_b = str(t_b_cur.fetchone()[0]).rjust(5)
 
         t_c_conn = self.create_connection()
         t_c_cur = t_c_conn.cursor()
         t_c_cur.execute("SELECT pg_backend_pid()")
-        pc = t_c_cur.fetchone()[0]
+        p_c = str(t_c_cur.fetchone()[0]).rjust(5)
 
         t_check_conn = self.create_connection()
         t_check_cur = t_check_conn.cursor(row_factory=dict_row)
@@ -122,62 +123,115 @@ class PostgresqlLockTest(TestCase):
 
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
-        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="left")
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="left"
+        )
 
-        self.assertEqual(actual_table,f"""
+        self.assertEqual(
+            actual_table,
+            f"""
 +-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
 |   pid | locktype   | table_name   | page   | tuple   | transactionid   | mode          | granted   | state               |
 |-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------|
-|  {pa} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
-|  {pb} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
-|  {pc} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
+| {p_a} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
+| {p_b} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
+| {p_c} | virtualxid |              |        |         |                 | ExclusiveLock | True      | idle in transaction |
 +-------+------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
-""".strip())
+""".strip(),
+        )
 
         # Aがselect for update
         t_a_cur.execute("SELECT * FROM users WHERE id=1 FOR UPDATE")
         t_a_cur.execute("SELECT txid_current()")
-        ta = t_a_cur.fetchone()[0]
+        t_a = str(t_a_cur.fetchone()[0]).rjust(5)
 
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
-        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="right")
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="right"
+        )
 
-        self.assertEqual(actual_table,f"""
+        self.assertEqual(
+            actual_table,
+            f"""
 +-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
 |   pid |      locktype |   table_name |   page |   tuple |   transactionid |          mode |   granted |               state |
 |-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------|
-|  {pa} |      relation |        users |        |         |                 |  RowShareLock |      True | idle in transaction |
-|  {pa} |      relation |   users_pkey |        |         |                 |  RowShareLock |      True | idle in transaction |
-|  {pa} | transactionid |              |        |         |             {ta} | ExclusiveLock |      True | idle in transaction |
-|  {pa} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
-|  {pb} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
-|  {pc} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
+| {p_a} |      relation |        users |        |         |                 |  RowShareLock |      True | idle in transaction |
+| {p_a} |      relation |   users_pkey |        |         |                 |  RowShareLock |      True | idle in transaction |
+| {p_a} | transactionid |              |        |         |           {t_a} | ExclusiveLock |      True | idle in transaction |
+| {p_a} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
+| {p_b} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
+| {p_c} |    virtualxid |              |        |         |                 | ExclusiveLock |      True | idle in transaction |
 +-------+---------------+--------------+--------+---------+-----------------+---------------+-----------+---------------------+
-""".strip())
+""".strip(),
+        )
 
         # Bがselect for update
-        thread = threading.Thread(target=t_b_cur.execute, args=("SELECT * FROM users WHERE id=1 FOR UPDATE",))
-        thread.start()
-        thread.join(timeout=0.1)
+        thread_b = threading.Thread(
+            target=t_b_cur.execute, args=("SELECT * FROM users WHERE id=1 FOR UPDATE",)
+        )
+        thread_b.start()
+        thread_b.join(timeout=0.1)
 
         t_check_cur.execute(check_lock_query)
         actual = t_check_cur.fetchall()
-        actual_table = tabulate(actual, headers="keys", tablefmt="psql", stralign="right")
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="right"
+        )
 
-        self.assertEqual(actual_table,f"""
+        self.assertEqual(
+            actual_table,
+            f"""
 +-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
 |   pid |      locktype |   table_name |   page |   tuple |   transactionid |                mode |   granted |               state |
 |-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------|
-|  {pa} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
-|  {pa} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
-|  {pa} | transactionid |              |        |         |             {ta} |       ExclusiveLock |      True | idle in transaction |
-|  {pa} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
-|  {pb} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
-|  {pb} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
-|  {pb} | transactionid |              |        |         |             {ta} |           ShareLock |     False | idle in transaction |
-|  {pb} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |      True | idle in transaction |
-|  {pb} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
-|  {pc} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_a} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_a} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_a} | transactionid |              |        |         |           {t_a} |       ExclusiveLock |      True | idle in transaction |
+| {p_a} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_b} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} | transactionid |              |        |         |           {t_a} |           ShareLock |     False | idle in transaction |
+| {p_b} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |      True | idle in transaction |
+| {p_b} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_c} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
 +-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
-""".strip())
+""".strip(),
+        )
+
+        # Cがselect for update
+        thread_c = threading.Thread(
+            target=t_c_cur.execute, args=("SELECT * FROM users WHERE id=1 FOR UPDATE",)
+        )
+        thread_c.start()
+        thread_c.join(timeout=0.1)
+
+        t_check_cur.execute(check_lock_query)
+        actual = t_check_cur.fetchall()
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="right"
+        )
+
+        self.assertEqual(
+            actual_table,
+            f"""
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+|   pid |      locktype |   table_name |   page |   tuple |   transactionid |                mode |   granted |               state |
+|-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------|
+| {p_a} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_a} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_a} | transactionid |              |        |         |           {t_a} |       ExclusiveLock |      True | idle in transaction |
+| {p_a} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_b} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_b} | transactionid |              |        |         |           {t_a} |           ShareLock |     False | idle in transaction |
+| {p_b} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |      True | idle in transaction |
+| {p_b} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
+| {p_c} |      relation |        users |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_c} |      relation |   users_pkey |        |         |                 |        RowShareLock |      True | idle in transaction |
+| {p_c} |         tuple |        users |      0 |       1 |                 | AccessExclusiveLock |     False | idle in transaction |
+| {p_c} |    virtualxid |              |        |         |                 |       ExclusiveLock |      True | idle in transaction |
++-------+---------------+--------------+--------+---------+-----------------+---------------------+-----------+---------------------+
+""".strip(),
+        )
