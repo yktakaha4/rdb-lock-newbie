@@ -12,8 +12,15 @@ services:
       MYSQL_PASSWORD: mysql
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
     depends_on:
       mysql:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   mysql:
@@ -27,3 +34,12 @@ services:
       MYSQL_PASSWORD: mysql
     healthcheck:
       test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost"]
