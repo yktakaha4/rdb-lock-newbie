@@ -16,8 +16,8 @@ test: ## test
 
 check: ## check
 	echo 'Starting $@'
-	poetry run black --check .
-	poetry run isort --check .
+	docker compose run --rm python poetry run black --check .
+	docker compose run --rm python poetry run isort --check .
 	echo 'Finished $@'
 
 fix: ## fix
