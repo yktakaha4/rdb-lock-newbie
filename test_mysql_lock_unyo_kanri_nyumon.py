@@ -273,7 +273,9 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
         conn2 = await self.create_connection()
         cur2 = await conn2.cursor()
         await cur2.execute("BEGIN")
-        executed = cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+        executed = cur2.execute(
+            "INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)"
+        )
 
         check_lock_waits_query = """
         select
