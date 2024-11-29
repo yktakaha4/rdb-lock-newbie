@@ -1,51 +1,15 @@
 import threading
-from os import environ
-from unittest import TestCase
 
-import psycopg
 from psycopg.rows import dict_row
 from tabulate import tabulate
 
+from util import PostgresqlBaseTest
 
-class PostgresqlLockTest(TestCase):
+
+class PostgresqlLockTest(PostgresqlBaseTest):
     """
     https://qiita.com/behiron/items/571562ea33b8212a4c32
     """
-
-    maxDiff = None
-
-    def create_connection(self):
-        params = {
-            "user": environ["POSTGRES_USER"],
-            "password": environ["POSTGRES_PASSWORD"],
-            "host": environ["POSTGRES_HOST"],
-            "port": environ["POSTGRES_PORT"],
-            "dbname": environ["POSTGRES_DB"],
-        }
-        conn = psycopg.connect(
-            conninfo=" ".join([f"{k}={v}" for k, v in params.items()]),
-            autocommit=False,
-        )
-        self._connections.append(conn)
-        return conn
-
-    def setup_tables(self, query):
-        conn = self.create_connection()
-        with conn.cursor() as cur:
-            for q in query.split(";"):
-                cleaned = q.strip()
-                if not cleaned:
-                    continue
-                cur.execute(cleaned)
-        conn.commit()
-
-    def setUp(self):
-        self._connections = []
-
-    def tearDown(self):
-        for conn in self._connections:
-            conn.rollback()
-            conn.close()
 
     def test_lock_basic_example(self):
         """
