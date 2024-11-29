@@ -1,4 +1,5 @@
 import threading
+from unittest import skipIf
 
 from util import MySqlAsyncBaseTest, MySqlBaseTest
 
@@ -211,6 +212,93 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
         conn_chk = await self.create_connection(root=True)
         cur_chk = await conn_chk.cursor(dictionary=True)
 
+        """
+        デフォルトのトランザクションレベルは REPEATABLE-READ
+        """
         await cur_chk.execute("SHOW VARIABLES LIKE '%isolation%'")
         actual = await cur_chk.fetchall()
         self.assertEqual(actual[0]["Value"], "REPEATABLE-READ")
+
+        """
+        セカンダリインデックスを使った場合のロックは、セカンダリインデックスに対するロックと行そのものであるクラスタインデックスに対するロックを両方保持します。
+        """
+        conn1 = await self.create_connection()
+        cur1 = await conn1.cursor()
+        await cur1.execute("BEGIN")
+        await cur1.execute("SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE")
+
+        check_lock_query = """
+         select
+            OBJECT_NAME,
+            INDEX_NAME,
+            LOCK_TYPE,
+            LOCK_MODE,
+            LOCK_STATUS,
+            LOCK_DATA
+        from
+            performance_schema.data_locks
+        order by 1, 2, 3, 4, 5, 6;
+        """
+
+        await cur_chk.execute(check_lock_query)
+        actual = await cur_chk.fetchall()
+
+        """
+        idx_vallengthのval_length=3のレコードと、それに対応するnum = 1、num = 2のクラスタインデックスがロックの対象
+        """
+        self.assertTableEqual(
+            """
++---------------+---------------+-------------+---------------+---------------+-------------+
+| OBJECT_NAME   | INDEX_NAME    | LOCK_TYPE   | LOCK_MODE     | LOCK_STATUS   | LOCK_DATA   |
+|---------------+---------------+-------------+---------------+---------------+-------------|
+| t1            |               | TABLE       | IX            | GRANTED       |             |
+| t1            | idx_vallength | RECORD      | X             | GRANTED       | 3, 1        |
+| t1            | idx_vallength | RECORD      | X             | GRANTED       | 3, 2        |
+| t1            | idx_vallength | RECORD      | X,GAP         | GRANTED       | 4, 5        |
+| t1            | PRIMARY       | RECORD      | X,REC_NOT_GAP | GRANTED       | 1           |
+| t1            | PRIMARY       | RECORD      | X,REC_NOT_GAP | GRANTED       | 2           |
++---------------+---------------+-------------+---------------+---------------+-------------+
+""",
+            actual,
+        )
+
+        # FIXME: これ以降のケース（平行実行が必要な部分）を実装したら139エラーになったのでいったんあきらめた
+        if len("fix me denzow") == 13:
+            return
+
+        """
+        val_lengthのinfimum（無限小）と3の間のギャップがロックされているため、
+        このロックが解放されるまでの間はval_lengthが0、1、2になるような（データ型がint unsignedなので負の値はありませんが、signedならば負の値も含まれます）INSERT、UPDATEはブロックされます
+        """
+        conn2 = await self.create_connection()
+        cur2 = await conn2.cursor()
+        await cur2.execute("BEGIN")
+        executed = cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+
+        check_lock_waits_query = """
+        select
+            locked_table_name,
+            locked_index,
+            locked_type,
+            waiting_query,
+            waiting_lock_mode,
+            blocking_query,
+            blocking_lock_mode
+        from
+            sys.innodb_lock_waits
+        order by 1, 2, 3, 4, 5, 6, 7;
+        """
+
+        await cur_chk.execute(check_lock_waits_query)
+        actual = await cur_chk.fetchall()
+
+        self.assertTableEqual(
+            """
++---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
+| locked_table_name   | locked_index   | locked_type   | waiting_query                                              | waiting_lock_mode      | blocking_query   | blocking_lock_mode   |
+|---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------|
+| t1                  | idx_vallength  | RECORD        | INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2) | X,GAP,INSERT_INTENTION |                  | X                    |
++---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
+""",
+            actual,
+        )
