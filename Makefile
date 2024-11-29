@@ -20,6 +20,16 @@ fix: ## fix
 	poetry run isort .
 	echo 'Finished $@'
 
+mysql: ## mysql
+	echo 'Starting $@'
+	docker compose exec mysql mysql -u root -pmysql
+	echo 'Finished $@'
+
+psql: ## psql
+	echo 'Starting $@'
+	docker compose exec postgres psql -U postgres
+	echo 'Finished $@'
+
 help: ## Print this help
 	echo 'Usage: make [target]'
 	echo ''
