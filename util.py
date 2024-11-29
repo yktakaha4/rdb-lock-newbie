@@ -23,6 +23,8 @@ class MySqlBaseTest(TestCase):
             database=environ["MYSQL_DATABASE"],
         )
         conn.autocommit = False
+        conn.cmd_query("SET max_execution_time = 5000")
+        conn.cmd_query("SET innodb_lock_wait_timeout = 5")
         self._connections.append(conn)
         return conn
 
