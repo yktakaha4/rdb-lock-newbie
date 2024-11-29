@@ -1,6 +1,6 @@
 import threading
 
-from util import MySqlBaseTest
+from util import MySqlAsyncBaseTest, MySqlBaseTest
 
 
 class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
@@ -176,3 +176,41 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
 """,
             actual,
         )
+
+
+class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
+    """
+    https://gihyo.jp/book/2024/978-4-297-14184-4
+    """
+
+    async def test_innodb_layer_lock(self):
+        """
+        InnoDB によるロック
+        """
+
+        await self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `t1`;
+        CREATE TABLE `t1` (
+          `num` int NOT NULL,
+          `val` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+          `val_length` int unsigned NOT NULL,
+          PRIMARY KEY (`num`),
+          KEY `idx_vallength` (`val_length`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+        INSERT INTO `t1`
+            (`num`, `val`, `val_length`)
+        VALUES
+            (1, 'one', 3),
+            (2, 'two', 3),
+            (3, 'three', 5),
+            (5, 'five', 4);
+        """
+        )
+
+        conn_chk = await self.create_connection(root=True)
+        cur_chk = await conn_chk.cursor(dictionary=True)
+
+        await cur_chk.execute("SHOW VARIABLES LIKE '%isolation%'")
+        actual = await cur_chk.fetchall()
+        self.assertEqual(actual[0]["Value"], "REPEATABLE-READ")

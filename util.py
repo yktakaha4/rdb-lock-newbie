@@ -1,8 +1,9 @@
 from os import environ
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 import psycopg
 from mysql import connector
+from mysql.connector import aio as aio_connector
 from tabulate import tabulate
 
 
@@ -42,6 +43,58 @@ class MySqlBaseTest(TestCase):
         for conn in self._connections:
             try:
                 conn.close()
+            except Exception:
+                pass
+
+    def assertTableEqual(self, expected, actual):
+        self.assertEqual(type(expected), str)
+        self.assertEqual(type(actual), list)
+
+        expected_table = expected.strip()
+        actual_table = tabulate(
+            actual, headers="keys", tablefmt="psql", stralign="left"
+        )
+        if expected_table != actual_table:
+            self.fail(f"Expected:\n{expected_table}\n\nActual:\n{actual_table}")
+
+
+class MySqlAsyncBaseTest(IsolatedAsyncioTestCase):
+    maxDiff = None
+
+    async def create_connection(self, root=False):
+        conn = await aio_connector.connect(
+            host=environ["MYSQL_HOST"],
+            port=int(environ["MYSQL_PORT"]),
+            user=environ["MYSQL_USER"] if not root else "root",
+            password=(
+                environ["MYSQL_PASSWORD"]
+                if not root
+                else environ["MYSQL_ROOT_PASSWORD"]
+            ),
+            database=environ["MYSQL_DATABASE"],
+        )
+        await conn.set_autocommit(False)
+        self._connections.append(conn)
+        return conn
+
+    async def setup_tables(self, query):
+        conn = await self.create_connection(root=True)
+        cur = await conn.cursor()
+        for q in query.split(";"):
+            cleaned = q.strip()
+            if not cleaned:
+                continue
+            await cur.execute(cleaned)
+
+        await conn.commit()
+
+    async def asyncSetUp(self):
+        self._connections = []
+
+    async def asyncTearDown(self):
+        for conn in self._connections:
+            try:
+                await conn.close()
             except Exception:
                 pass
 
