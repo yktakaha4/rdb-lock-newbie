@@ -22,7 +22,7 @@ fix: ## fix
 
 mysql: ## mysql
 	echo 'Starting $@'
-	docker compose exec mysql mysql -u root -pmysql
+	docker compose exec mysql mysql -u root -pmysql -D mysql
 	echo 'Finished $@'
 
 psql: ## psql
