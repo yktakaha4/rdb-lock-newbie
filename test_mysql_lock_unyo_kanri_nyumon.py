@@ -46,7 +46,7 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         セカンダリインデックスを使った場合のロックは、セカンダリインデックスに対するロックと行そのものであるクラスタインデックスに対するロックを両方保持します。
         """
         conn1 = self.create_connection()
-        cur1 = conn1.cursor(dictionary=True)
+        cur1 = conn1.cursor()
         cur1.execute("BEGIN")
         cur1.execute("SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE")
 
@@ -90,10 +90,12 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         このロックが解放されるまでの間はval_lengthが0、1、2になるような（データ型がint unsignedなので負の値はありませんが、signedならば負の値も含まれます）INSERT、UPDATEはブロックされます
         """
         conn2 = self.create_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("BEGIN")
+
         def operation2():
-            cur2 = conn2.cursor()
-            cur2.execute("BEGIN")
             cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+
         thread2 = threading.Thread(target=operation2)
         thread2.start()
         thread2.join(timeout=0.1)
@@ -147,10 +149,16 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         """
         FOR SHAREやFOR UPDATE付きの場合、分離レベルがSERIALIZABLEのときはDELETEの排他ロックと競合するため待たされることになります。
         """
+        conn1.rollback()
+        cur1.execute("SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE")
+
         conn4 = self.create_connection()
+        cur4 = conn4.cursor()
+        cur4.execute("BEGIN")
+
         def operation4():
-            conn4.cmd_query("BEGIN")
-            conn4.cmd_query("SELECT * FROM t1 WHERE val_length = 3")
+            cur4.execute("SELECT * FROM t1 WHERE val_length = 3 FOR SHARE")
+
         thread4 = threading.Thread(target=operation4)
         thread4.start()
         thread4.join(timeout=0.1)
@@ -160,11 +168,11 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
 
         self.assertTableEqual(
             """
-+---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
-| locked_table_name   | locked_index   | locked_type   | waiting_query                                              | waiting_lock_mode      | blocking_query   | blocking_lock_mode   |
-|---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------|
-| t1                  | idx_vallength  | RECORD        | INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2) | X,GAP,INSERT_INTENTION |                  | X                    |
-+---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
++---------------------+----------------+---------------+-------------------------------------------------+---------------------+------------------+----------------------+
+| locked_table_name   | locked_index   | locked_type   | waiting_query                                   | waiting_lock_mode   | blocking_query   | blocking_lock_mode   |
+|---------------------+----------------+---------------+-------------------------------------------------+---------------------+------------------+----------------------|
+| t1                  | idx_vallength  | RECORD        | SELECT * FROM t1 WHERE val_length = 3 FOR SHARE | S                   |                  | X                    |
++---------------------+----------------+---------------+-------------------------------------------------+---------------------+------------------+----------------------+
 """,
             actual,
         )
