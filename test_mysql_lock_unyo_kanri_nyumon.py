@@ -1,7 +1,5 @@
 import threading
 
-from tabulate import tabulate
-
 from util import MySqlBaseTest
 
 
@@ -35,19 +33,8 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         """
         )
 
-        conn1 = self.create_connection()
-        conn2 = self.create_connection()
-        conn3 = self.create_connection()
         conn_chk = self.create_connection(root=True)
-
-        cur1 = conn1.cursor(dictionary=True)
-        cur2 = conn2.cursor(dictionary=True)
-        cur3 = conn3.cursor(dictionary=True)
         cur_chk = conn_chk.cursor(dictionary=True)
-
-        cur1.execute("BEGIN")
-        cur2.execute("BEGIN")
-        cur3.execute("BEGIN")
 
         """
         デフォルトのトランザクションレベルは REPEATABLE-READ
@@ -58,6 +45,9 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         """
         セカンダリインデックスを使った場合のロックは、セカンダリインデックスに対するロックと行そのものであるクラスタインデックスに対するロックを両方保持します。
         """
+        conn1 = self.create_connection()
+        cur1 = conn1.cursor(dictionary=True)
+        cur1.execute("BEGIN")
         cur1.execute("SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE")
 
         check_lock_query = """
@@ -99,11 +89,14 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         val_lengthのinfimum（無限小）と3の間のギャップがロックされているため、
         このロックが解放されるまでの間はval_lengthが0、1、2になるような（データ型がint unsignedなので負の値はありませんが、signedならば負の値も含まれます）INSERT、UPDATEはブロックされます
         """
-        thread2 = threading.Thread(
-            target=cur2.execute,
-            args=("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)",),
-        )
+        conn2 = self.create_connection()
+        def operation2():
+            cur2 = conn2.cursor()
+            cur2.execute("BEGIN")
+            cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+        thread2 = threading.Thread(target=operation2)
         thread2.start()
+        thread2.join(timeout=0.1)
 
         check_lock_waits_query = """
         select
@@ -137,6 +130,11 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
         REPEATABLE-READのロック指定なしSELECTはロックを必要としません。
         そのため、ロック範囲に含まれるWHERE val_length = 3やWHERE val_length = 1（行は存在しないが）およびWHERE num = 1もロック待ちになることはありません。
         """
+        conn3 = self.create_connection()
+        cur3 = conn3.cursor()
+
+        cur3.execute("BEGIN")
+
         cur3.execute("SELECT * FROM t1 WHERE val_length = 3")
         self.assertEqual(len(cur3.fetchall()), 2)
 
@@ -145,3 +143,28 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
 
         cur3.execute("SELECT * FROM t1 WHERE num = 1")
         self.assertEqual(len(cur3.fetchall()), 1)
+
+        """
+        FOR SHAREやFOR UPDATE付きの場合、分離レベルがSERIALIZABLEのときはDELETEの排他ロックと競合するため待たされることになります。
+        """
+        conn4 = self.create_connection()
+        def operation4():
+            conn4.cmd_query("BEGIN")
+            conn4.cmd_query("SELECT * FROM t1 WHERE val_length = 3")
+        thread4 = threading.Thread(target=operation4)
+        thread4.start()
+        thread4.join(timeout=0.1)
+
+        cur_chk.execute(check_lock_waits_query)
+        actual = cur_chk.fetchall()
+
+        self.assertTableEqual(
+            """
++---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
+| locked_table_name   | locked_index   | locked_type   | waiting_query                                              | waiting_lock_mode      | blocking_query   | blocking_lock_mode   |
+|---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------|
+| t1                  | idx_vallength  | RECORD        | INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2) | X,GAP,INSERT_INTENTION |                  | X                    |
++---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
+""",
+            actual,
+        )

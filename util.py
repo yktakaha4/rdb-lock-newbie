@@ -40,7 +40,10 @@ class MySqlBaseTest(TestCase):
 
     def tearDown(self):
         for conn in self._connections:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def assertTableEqual(self, expected, actual):
         self.assertEqual(type(expected), str)
@@ -87,5 +90,7 @@ class PostgresqlBaseTest(TestCase):
 
     def tearDown(self):
         for conn in self._connections:
-            conn.rollback()
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
