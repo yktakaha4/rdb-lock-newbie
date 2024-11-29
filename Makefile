@@ -14,6 +14,12 @@ test: ## test
 	docker compose run --rm python poetry run python -m unittest discover -v
 	echo 'Finished $@'
 
+check: ## check
+	echo 'Starting $@'
+	poetry run black --check .
+	poetry run isort --check .
+	echo 'Finished $@'
+
 fix: ## fix
 	echo 'Starting $@'
 	poetry run black .
