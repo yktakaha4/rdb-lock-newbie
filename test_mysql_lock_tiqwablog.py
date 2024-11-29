@@ -1,50 +1,13 @@
 import re
 import threading
-from os import environ
-from unittest import TestCase
 
-from mysql import connector
+from util import MySqlBaseTest
 
 
-class MySqlLockTest(TestCase):
+class MySqlLockTiqwablogTest(MySqlBaseTest):
     """
     https://blog.tiqwab.com/2018/06/10/innodb-locking.html
     """
-
-    def create_connection(self, root=False):
-        conn = connector.connect(
-            host=environ["MYSQL_HOST"],
-            port=environ["MYSQL_PORT"],
-            user=environ["MYSQL_USER"] if not root else "root",
-            password=(
-                environ["MYSQL_PASSWORD"]
-                if not root
-                else environ["MYSQL_ROOT_PASSWORD"]
-            ),
-            database=environ["MYSQL_DATABASE"],
-        )
-        conn.autocommit = False
-        self._connections.append(conn)
-        return conn
-
-    def setup_tables(self, query):
-        conn = self.create_connection(root=True)
-        with conn.cursor() as cur:
-            for q in query.split(";"):
-                cleaned = q.strip()
-                if not cleaned:
-                    continue
-                cur.execute(cleaned)
-        conn.commit()
-
-    def setUp(self):
-        self._connections = []
-
-    def tearDown(self):
-        for conn in self._connections:
-            if conn.is_connected():
-                conn.rollback()
-                conn.close()
 
     def test_consistent_read_and_locking_read(self):
         """

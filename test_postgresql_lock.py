@@ -1,51 +1,15 @@
 import threading
-from os import environ
-from unittest import TestCase
 
-import psycopg
 from psycopg.rows import dict_row
 from tabulate import tabulate
 
+from util import PostgresqlBaseTest
 
-class PostgresqlLockTest(TestCase):
+
+class PostgresqlLockTest(PostgresqlBaseTest):
     """
     https://qiita.com/behiron/items/571562ea33b8212a4c32
     """
-
-    maxDiff = None
-
-    def create_connection(self):
-        params = {
-            "user": environ["POSTGRES_USER"],
-            "password": environ["POSTGRES_PASSWORD"],
-            "host": environ["POSTGRES_HOST"],
-            "port": environ["POSTGRES_PORT"],
-            "dbname": environ["POSTGRES_DB"],
-        }
-        conn = psycopg.connect(
-            conninfo=" ".join([f"{k}={v}" for k, v in params.items()]),
-            autocommit=False,
-        )
-        self._connections.append(conn)
-        return conn
-
-    def setup_tables(self, query):
-        conn = self.create_connection()
-        with conn.cursor() as cur:
-            for q in query.split(";"):
-                cleaned = q.strip()
-                if not cleaned:
-                    continue
-                cur.execute(cleaned)
-        conn.commit()
-
-    def setUp(self):
-        self._connections = []
-
-    def tearDown(self):
-        for conn in self._connections:
-            conn.rollback()
-            conn.close()
 
     def test_lock_basic_example(self):
         """
@@ -151,7 +115,17 @@ class PostgresqlLockTest(TestCase):
             actual, headers="keys", tablefmt="psql", stralign="right"
         )
 
-        # FIXME: 待ちの state は active になるとのことだったが、idle in transaction になっている
+        # 待ちの state は active になるとのことだったが、idle in transaction になっている
+        # 実際にpsqlで確認したら active だったが。stateの詳細は以下
+        # https://www.postgresql.jp/docs/14/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW:~:text=%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82-,state%20text,-%E7%8F%BE%E5%9C%A8%E3%81%AE%E3%83%90%E3%83%83%E3%82%AF
+        # | 状態                                | 説明                                                                                       |
+        # |--------------------------------------|---------------------------------------------------------------------------------------------------|
+        # | active                               | バックエンドは問い合わせを実行中です。                                                                 |
+        # | idle                                 | バックエンドは新しいクライアントからのコマンドを待機しています。                                         |
+        # | idle in transaction                  | バックエンドはトランザクションの内部にいますが、現在実行中の問い合わせがありません。                           |
+        # | idle in transaction (aborted)        | この状態はidle in transactionと似ていますが、トランザクション内のある文がエラーになっている点が異なります。       |
+        # | fastpath function call               | バックエンドは近道関数を実行中です。                                                     |
+        # | disabled                             | この状態は、このバックエンドでtrack\_activitiesが無効である場合に報告されます。                         |
         self.assertEqual(
             actual_table,
             f"""

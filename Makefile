@@ -14,10 +14,26 @@ test: ## test
 	docker compose run --rm python poetry run python -m unittest discover -v
 	echo 'Finished $@'
 
+check: ## check
+	echo 'Starting $@'
+	docker compose run --rm python poetry run black --check .
+	docker compose run --rm python poetry run isort --check .
+	echo 'Finished $@'
+
 fix: ## fix
 	echo 'Starting $@'
 	poetry run black .
 	poetry run isort .
+	echo 'Finished $@'
+
+mysql: ## mysql
+	echo 'Starting $@'
+	docker compose exec mysql mysql -u root -pmysql -D mysql
+	echo 'Finished $@'
+
+psql: ## psql
+	echo 'Starting $@'
+	docker compose exec postgres psql -U postgres
 	echo 'Finished $@'
 
 help: ## Print this help
