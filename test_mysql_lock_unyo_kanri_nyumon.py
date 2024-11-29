@@ -1,5 +1,4 @@
 import threading
-from unittest import skipIf
 
 from util import MySqlAsyncBaseTest, MySqlBaseTest
 
@@ -175,6 +174,150 @@ class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
 | t1                  | idx_vallength  | RECORD        | SELECT * FROM t1 WHERE val_length = 3 FOR SHARE | S                   |                  | X                    |
 +---------------------+----------------+---------------+-------------------------------------------------+---------------------+------------------+----------------------+
 """,
+            actual,
+        )
+
+    def test_observe_lock(self):
+        """
+        ロックの観測
+        """
+        self.setup_tables(
+            """
+        DROP TABLE IF EXISTS `t1`;
+        CREATE TABLE `t1` (
+          `num` int NOT NULL,
+          `val` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+          `val_length` int unsigned NOT NULL,
+          PRIMARY KEY (`num`),
+          KEY `idx_vallength` (`val_length`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+        INSERT INTO `t1`
+            (`num`, `val`, `val_length`)
+        VALUES
+            (1, 'one', 3),
+            (2, 'two', 3),
+            (3, 'three', 5),
+            (5, 'five', 4);
+        """
+        )
+
+        """
+        sys.innodb_lock_waitsビューがあらかじめ用意されているので、多くの場合はこのビューをクエリすることで有用な情報が得られます。
+        """
+        conn1 = self.create_connection()
+        cur1 = conn1.cursor()
+        cur1.execute("BEGIN")
+        cur1.execute("SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE")
+
+        conn2 = self.create_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("BEGIN")
+
+        def operation2():
+            cur2.execute("SELECT 'operation2 history'")
+            cur2.reset()
+            cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+
+        thread2 = threading.Thread(target=operation2)
+        thread2.start()
+        thread2.join(timeout=0.1)
+
+        conn_chk = self.create_connection(root=True)
+        cur_chk = conn_chk.cursor(dictionary=True)
+        check_lock_waits_query = """
+        select
+            locked_table_schema,
+            locked_table_name,
+            locked_index,
+            waiting_query,
+            blocking_query
+        from
+            sys.innodb_lock_waits
+        order by 1, 2, 3, 4, 5;
+        """
+        cur_chk.execute(check_lock_waits_query)
+
+        actual = cur_chk.fetchall()
+        self.assertTableEqual(
+            """
++-----------------------+---------------------+----------------+------------------------------------------------------------+------------------+
+| locked_table_schema   | locked_table_name   | locked_index   | waiting_query                                              | blocking_query   |
+|-----------------------+---------------------+----------------+------------------------------------------------------------+------------------|
+| mysql                 | t1                  | idx_vallength  | INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2) |                  |
++-----------------------+---------------------+----------------+------------------------------------------------------------+------------------+
+            """,
+            actual,
+        )
+
+        """
+        実際にどのクエリが該当のInnoDBロックを取得したかを特定する方法はありません
+        必要に応じてperformance_schema.events_statements_historyテーブルをたどって過去のクエリを探索する必要があります
+        """
+        check_lock_query = """
+        select
+            b_t.THREAD_ID as blocking_thread_id,
+            w_t.THREAD_ID as waiting_thread_id
+        from
+            sys.innodb_lock_waits w
+        left join
+            information_schema.INNODB_TRX as b_trx
+        on
+            w.blocking_trx_id = b_trx.trx_id
+        left join
+            performance_schema.threads as b_t
+        on
+            b_trx.trx_mysql_thread_id = b_t.PROCESSLIST_ID
+        left join
+            information_schema.INNODB_TRX as w_trx
+        on
+            w.waiting_trx_id = w_trx.trx_id
+        left join
+            performance_schema.threads as w_t
+        on
+            w_trx.trx_mysql_thread_id = w_t.PROCESSLIST_ID
+        """
+
+        cur_chk.execute(check_lock_query)
+        actual = cur_chk.fetchall()
+        blocking_thread_id = actual[0]["blocking_thread_id"]
+        waiting_thread_id = actual[0]["waiting_thread_id"]
+        self.assertIsNotNone(blocking_thread_id)
+        self.assertIsNotNone(waiting_thread_id)
+
+        check_history_query = """
+        select
+            sql_text
+        from
+            performance_schema.events_statements_history
+        where
+            thread_id = %s
+        order by event_id desc
+        limit 1
+        """
+
+        cur_chk.execute(check_history_query, (blocking_thread_id,))
+        actual = cur_chk.fetchall()
+        self.assertTableEqual(
+            """
++--------------------------------------------------+
+| sql_text                                         |
+|--------------------------------------------------|
+| SELECT * FROM t1 WHERE val_length = 3 FOR UPDATE |
++--------------------------------------------------+
+        """,
+            actual,
+        )
+
+        cur_chk.execute(check_history_query, (waiting_thread_id,))
+        actual = cur_chk.fetchall()
+        self.assertTableEqual(
+            """
++-----------------------------+
+| sql_text                    |
+|-----------------------------|
+| SELECT 'operation2 history' |
++-----------------------------+
+        """,
             actual,
         )
 
