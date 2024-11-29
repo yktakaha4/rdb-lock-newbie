@@ -151,7 +151,7 @@ class PostgresqlLockTest(TestCase):
             actual, headers="keys", tablefmt="psql", stralign="right"
         )
 
-        # FIXME: 待ちの state は active になるとのことだったが、idle in transaction になっている
+        # FIXME: 待ちの state は active になるとのことだったが、idle in transaction になっている。実際にpsqlで確認したら active だった。
         self.assertEqual(
             actual_table,
             f"""
