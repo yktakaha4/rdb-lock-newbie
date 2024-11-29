@@ -8,6 +8,7 @@ class MySqlLockTiqwablogTest(MySqlBaseTest):
     """
     https://blog.tiqwab.com/2018/06/10/innodb-locking.html
     """
+
     def test_consistent_read_and_locking_read(self):
         """
         consistent read と locking read
@@ -398,8 +399,3 @@ class MySqlLockTiqwablogTest(MySqlBaseTest):
                 re.MULTILINE,
             ),
         )
-
-class MySqlLockUnyoKanriNyumonTest(MySqlBaseTest):
-    """
-    https://gihyo.jp/book/2024/978-4-297-14184-4
-    """
