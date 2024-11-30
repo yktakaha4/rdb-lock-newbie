@@ -1,4 +1,5 @@
 import threading
+import asyncio
 
 from util import MySqlAsyncBaseTest, MySqlBaseTest
 
@@ -405,9 +406,9 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
             actual,
         )
 
-        # FIXME: これ以降のケース（平行実行が必要な部分）を実装したら139エラーになったのでいったんあきらめた
-        if len("fix me denzow") == 13:
-            return
+        # # FIXME: これ以降のケース（平行実行が必要な部分）を実装したら139エラーになったのでいったんあきらめた
+        # if len("fix me denzow") == 13:
+        #     return
 
         """
         val_lengthのinfimum（無限小）と3の間のギャップがロックされているため、
@@ -416,9 +417,8 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
         conn2 = await self.create_connection()
         cur2 = await conn2.cursor()
         await cur2.execute("BEGIN")
-        executed = cur2.execute(
-            "INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)"
-        )
+        executed = asyncio.create_task(cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)"))
+        await asyncio.sleep(1)
 
         check_lock_waits_query = """
         select
@@ -436,7 +436,6 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
 
         await cur_chk.execute(check_lock_waits_query)
         actual = await cur_chk.fetchall()
-
         self.assertTableEqual(
             """
 +---------------------+----------------+---------------+------------------------------------------------------------+------------------------+------------------+----------------------+
@@ -447,3 +446,8 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
 """,
             actual,
         )
+        try:
+            await asyncio.wait_for(executed, timeout=1.0)
+        except asyncio.TimeoutError:
+            print('insert executed timeouted')
+
