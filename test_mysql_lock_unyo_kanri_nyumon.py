@@ -1,5 +1,5 @@
-import threading
 import asyncio
+import threading
 
 from util import MySqlAsyncBaseTest, MySqlBaseTest
 
@@ -417,7 +417,9 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
         conn2 = await self.create_connection()
         cur2 = await conn2.cursor()
         await cur2.execute("BEGIN")
-        executed = asyncio.create_task(cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)"))
+        executed = asyncio.create_task(
+            cur2.execute("INSERT INTO t1 (num, val, val_length) values (10, 'ju', 2)")
+        )
         await asyncio.sleep(1)
 
         check_lock_waits_query = """
@@ -449,5 +451,4 @@ class MySqlLockUnyoKanriNyumonAsyncTest(MySqlAsyncBaseTest):
         try:
             await asyncio.wait_for(executed, timeout=1.0)
         except asyncio.TimeoutError:
-            print('insert executed timeouted')
-
+            print("insert executed timeouted")
