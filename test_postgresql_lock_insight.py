@@ -1,5 +1,6 @@
 import re
 import threading
+import time
 
 from psycopg.rows import dict_row
 
@@ -39,6 +40,9 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
 
         t_check_conn = self.create_connection()
         t_check_cur = t_check_conn.cursor(row_factory=dict_row)
+
+        t_check_cur.execute("select count(*) as cnt from pg_stat_statements")
+        stat_count_before = t_check_cur.fetchall()[0]["cnt"]
 
         t_a_cur.execute("BEGIN")
         t_b_cur.execute("BEGIN")
@@ -95,9 +99,6 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
             actual,
         )
 
-        t_a_cur.execute("ROLLBACK")
-        thread_b.join()
-
         """
         ロック競合の確認方法
         """
@@ -106,10 +107,22 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
         actual = t_check_cur.fetchall()
         self.assertEqual(actual[0]["log_lock_waits"], "on")
 
+        # クエリが実行されるとログが出力される（≒ロック待ちになっている間はロギングされない）
+        t_a_cur.execute("ROLLBACK")
+        thread_b.join()
+        time.sleep(1.0)
+
         with open("/var/log/postgresql/postgresql.log") as f:
-            lines = [l.rstrip() for l in f if f"[{p_b.strip()}]" in l]
-        self.assertEqual(len(lines), 2)
-        self.assertIn("there is already a transaction in progress", lines[0])
+            logs = '\n'.join([l.rstrip() for l in f if f"[{p_b.strip()}]" in l])
+        self.assertIn("there is already a transaction in progress", logs)
         self.assertIn(
-            "SELECT 'lock from b' FROM test_table_a WHERE i = 1 FOR UPDATE", lines[1]
+            "SELECT 'lock from b' FROM test_table_a WHERE i = 1 FOR UPDATE", logs
         )
+
+        """
+        pg_stat_statements にクエリごとの統計情報が記録される
+        ただ、内容を見るとわかるが実行中プロセスの情報ではなくクエリのパフォーマンスチューニング用の情報のため、実行としては有効でない
+        """
+        t_check_cur.execute("select count(*) as cnt from pg_stat_statements")
+        stat_count_after = t_check_cur.fetchall()[0]["cnt"]
+        self.assertEqual(stat_count_after, stat_count_before + 1)
