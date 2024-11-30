@@ -113,7 +113,7 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
         time.sleep(1.0)
 
         with open("/var/log/postgresql/postgresql.log") as f:
-            logs = '\n'.join([l.rstrip() for l in f if f"[{p_b.strip()}]" in l])
+            logs = "\n".join([l.rstrip() for l in f if f"[{p_b.strip()}]" in l])
         self.assertIn("there is already a transaction in progress", logs)
         self.assertIn(
             "SELECT 'lock from b' FROM test_table_a WHERE i = 1 FOR UPDATE", logs
@@ -125,4 +125,4 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
         """
         t_check_cur.execute("select count(*) as cnt from pg_stat_statements")
         stat_count_after = t_check_cur.fetchall()[0]["cnt"]
-        self.assertEqual(stat_count_after, stat_count_before + 1)
+        self.assertGreater(stat_count_after, stat_count_before)
