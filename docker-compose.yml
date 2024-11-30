@@ -5,6 +5,7 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+      - postgres-log:/var/log/postgresql:ro
     environment:
       MYSQL_ROOT_PASSWORD: mysql
       MYSQL_DATABASE: mysql
@@ -37,9 +38,17 @@ services:
 
   postgres:
     image: postgres:14
+    command: -c config_file=/etc/postgresql/postgresql.conf
+    volumes:
+      - ./db/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./db/postgres/initdb.d:/docker-entrypoint-initdb.d
+      - postgres-log:/var/log/postgresql
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "localhost"]
+
+volumes:
+  postgres-log:
