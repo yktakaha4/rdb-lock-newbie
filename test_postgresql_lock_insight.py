@@ -67,22 +67,20 @@ class PostgresqlInsightTest(PostgresqlBaseTest):
             blocking.pid as b_pid,
             blocking.query as b_query
         from (
-            select
-                pid,
+            select distinct
+                *,
                 unnest(pg_blocking_pids(pid)) as blocking_pid
             from
-                pg_stat_activity) as locks
-            join
-                pg_stat_activity as waiting
-            on
-                locks.pid = waiting.pid
+                pg_stat_activity) as waiting
             join
                 pg_stat_activity as blocking
             on
-                locks.blocking_pid = blocking.pid
+                waiting.blocking_pid = blocking.pid
             order by
                 waiting.pid,
-                blocking.pid;
+                waiting.query,
+                blocking.pid,
+                blocking.query;
         """
 
         t_check_cur.execute(check_lock_query)
