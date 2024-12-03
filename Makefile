@@ -31,6 +31,11 @@ mysql: ## mysql
 	docker compose exec mysql mysql -u root -pmysql -D mysql
 	echo 'Finished $@'
 
+mysql_world: ## mysql_world
+	echo 'Starting $@'
+	docker compose exec mysql mysql -u root -pmysql -D world
+	echo 'Finished $@'
+
 psql: ## psql
 	echo 'Starting $@'
 	docker compose exec postgres psql -U postgres
